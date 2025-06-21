@@ -161,6 +161,9 @@ async def write_report(query: str, search_results: list[str]):
     print("Finished writing report")
     return result.output
 
+with ui.header().style('justify-content: space-between; align-items: center;'):
+    ui.label('Simple Deep Search').classes('text-xl font-semibold')
+    new_search_btn = ui.button('Create New SEARCH')
 with ui.element('div').classes("m-4 gap-4 grid sm:grid-cols-12 self-stretch"):
     with ui.element('div').classes("col-span-5 min-h-[100px] flex flex-col gap-4"):
         input_box = ui.textarea(
@@ -171,8 +174,8 @@ with ui.element('div').classes("m-4 gap-4 grid sm:grid-cols-12 self-stretch"):
         send_btn = ui.button('Send')
         with ui.card().tight().classes('p-2') as main_output:
             ui.markdown('#### Output:')
-            with ui.card_section():
-                ui.label('intermediate: Lorem ipsum dolor sit amet, consectetur adipiscing elit, ...')
+            with ui.card_section() as main_card_section:
+                pass
 
     with ui.card().classes("p-2 col-span-7 min-h-[600px] rounded-lg bg-white-500"):
         with ui.expansion('Buil the search plan', caption='Build the list of search items').classes('w-full') as build_plan_step:
@@ -182,9 +185,20 @@ with ui.element('div').classes("m-4 gap-4 grid sm:grid-cols-12 self-stretch"):
         with ui.expansion('Create report', caption='Create summay from search rerult').classes('w-full') as report_step:
             ui.label('inside the expansion')
 
-    send_btn.on('click', lambda _: asyncio.create_task(handle_click()))
+    send_btn.on('click', lambda _: asyncio.create_task(handle_send_click()))
+    new_search_btn.on('click', lambda _: asyncio.create_task(handle_new_search_click()))
 
-async def handle_click():
+async def handle_new_search_click():
+    input_box.value = ''
+    build_plan_step.clear()
+    build_plan_step.close()
+    search_step.clear()
+    search_step.close()
+    report_step.clear()
+    report_step.close()
+    main_card_section.clear()
+
+async def handle_send_click():
     searching = {
         'checkboxes': {},
         'progresses': {},
@@ -243,5 +257,8 @@ f'''**Search**: {i+1}<br>
     with report_step:
         ui.markdown(report.markdown_report)
         ui.button('Export PDF', on_click=lambda: export_pdf(report.markdown_report))
+    with main_card_section:
+        ui.markdown(report.markdown_report)
+
     
 ui.run(title='Deep Search Agent', port=int(os.environ.get('APP_PORT', 9000)), reload=True) 
