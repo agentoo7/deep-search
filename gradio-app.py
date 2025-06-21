@@ -8,7 +8,7 @@ from utils import export_pdf
 import time
 
 def new_search():
-    return "", "", "", "", gr.update(visible=False)
+    return gr.Tabs(selected=0), "", "", "", "", gr.update(visible=False)
 
 def deep_search_stream(query):
     # 1) Build plan
@@ -29,15 +29,16 @@ def deep_search_stream(query):
     search_md = "### Search Results\n"
     results = []
     for i, p in enumerate(plan.searches):
-        search_md += f"⏳ Step {i+1}: `{p.query}`\n\n"
+        step = f"⏳ Step {i+1}: `{p.query}`\n\n"
+        search_md += step
         yield gr.Tabs(selected=1), gr.update(value=plan_md), search_md, gr.update(value=""), gr.update(visible=False)
 
         item = asyncio.run(perform_searches(plan, callback=None))[i]
         results.append(item)
     
-        search_md = search_md.rstrip("⏳ Step {i+1}: `{p.query}`\n\n")
+        search_md = search_md.rstrip(step)
         search_md += (
-            f"✔️ Step {i+1}: [{item.title}]({item.url})\n\n"
+            f"\n\n✔️ Step {i+1}: [{item.title}]({item.url})\n\n"
             f"{item.content}\n\n"
         )
         yield gr.Tabs(selected=1), gr.update(value=plan_md), search_md, gr.update(value=""), gr.update(visible=False)
@@ -84,7 +85,7 @@ with gr.Blocks() as demo:
     )
     new_btn.click(
         fn=new_search,
-        outputs=[input_box, plan_output, search_output, report_output, export_btn]
+        outputs=[tabs, input_box, plan_output, search_output, report_output, export_btn]
     )
 
 if __name__ == "__main__":
