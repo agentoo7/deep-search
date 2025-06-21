@@ -1,165 +1,14 @@
+# %% Import Libs
+
 from nicegui import ui
-import asyncio, os, tempfile
-from dotenv import load_dotenv
-from weasyprint import HTML
-import logfire, markdown, requests
-from duckpy import Client
+import asyncio, os, sys
 
-from pydantic import BaseModel
+from agents.planner import plan_searches
+from agents.searcher import perform_searches
+from agents.report import write_report
+from utils import export_pdf
 
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.settings import ModelSettings
-
-load_dotenv(override=True)
-
-
-# Point at your vLLM server:
-provider = OpenAIProvider(
-    base_url=os.environ["LOCAL_CHAT_MODEL_BASE_URL"],
-    api_key=os.environ["LOCAL_CHAT_MODEL_API_KEY"],
-)
-
-# Tell PydanticAI which exact model name vLLM is serving:
-
-agent_model = os.environ.get("MODEL_NAME", 'gpt-4o-mini')
-# agent_model = OpenAIModel(os.environ["LOCAL_CHAT_MODEL_NAME"], provider=provider)
-
-
-model_settings = ModelSettings(
-    max_tokens=8000,
-    temperature=0.0,
-    stream=True
-)
-
-logfire.configure()
-logfire.instrument_pydantic_ai()
-
-HOW_MANY_SEARCHES = 5
-PLANNER_INSTRUCTIONS = f"You are a helpful research assistant. Given a query, come up with a set of web searches \
-to perform to best answer the query. Output {HOW_MANY_SEARCHES} terms to query for."
-
-
-class WebSearchItem(BaseModel):
-    reason: str
-    query: str
-
-class WebSearchPlan(BaseModel):
-    searches: list[WebSearchItem]
-
-planner_agent = Agent(
-    name="PlannerAgent",
-    instructions=PLANNER_INSTRUCTIONS,
-    model=agent_model,
-    model_settings=model_settings,
-    output_type=WebSearchPlan,
-)
-
-async def plan_searches(query: str):
-    result = await planner_agent.run(f"Query: {query}")
-    print(f"Will perform {len(result.output.searches)} searches")
-    return result.output
-
-def search_searxng(query: str, max_results: int = 5):
-    params = {"q": query, "format": "json"}
-    try:
-        host = os.environ['searxng_url']
-        resp = requests.get(host, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        results = data.get("results", [])[:max_results]
-        return results
-    except Exception as err:
-        print(f"Error fetching SearXNG results: {err}")
-        return []
-    
-def search_duck_duck_go(query: str, max_results: int = 5):
-    try:
-        print('search_duck_duck_go')
-        client = Client()
-        results = client.search(query)
-        results = results[:max_results]
-        return results
-    except Exception as err:
-        print(f"Error fetching DuckDuckGo results: {err}")
-        return []
-    
-def export_pdf(md_text: str):
-    html = markdown.markdown(md_text) # markdown to html
-    pdf_bytes = HTML(string=html).write_pdf()
-    fd, path = tempfile.mkstemp(suffix='.pdf')
-    with os.fdopen(fd, 'wb') as f:
-        f.write(pdf_bytes)
-    ui.download(path)
-
-SEARCH_INSTRUCTIONS = (
-    "You are a research assistant. Given a search term, you search the web for that term and "
-    "words. Capture the main points. Write succintly, no need to have complete sentences or good "
-    "produce a concise summary of the results. The summary must be 2-3 paragraphs and less than 300 "
-    "grammar. This will be consumed by someone synthesizing a report, so it's vital you capture the "
-    "essence and ignore any fluff. Do not include any additional commentary other than the summary itself."
-)
-
-class SearchResult(BaseModel):
-    url: str
-    title: str
-    content: str
-
-search_agent = Agent(
-    name="SearchAgent",
-    instructions=SEARCH_INSTRUCTIONS,
-    tools=[search_duck_duck_go if os.environ.get('SEARCH_ENGINE', 'DuckDuckGo') == 'DuckDuckGo'  else search_searxng],
-    model=agent_model,
-    model_settings=model_settings,
-    output_type=SearchResult
-)
-
-async def perform_searches(plan: WebSearchPlan, callback=None):
-    # Process sequential
-    results = []
-    for i, item in enumerate(plan.searches):
-        if callback:
-            await callback(i, {'status':'start', 'data': None})
-        result = await search(item)
-        results.append(result)
-        if callback:
-            await callback(i, {'status': 'end', 'data': result})
-    return results
-
-async def search(item: WebSearchItem):
-    input_text = f"Search term: {item.query}\nReason for searching: {item.reason}"
-    result = await search_agent.run(input_text)
-    return result.output
-
-REPORT_INSTRUCTIONS = (
-    "You are a senior researcher tasked with writing a cohesive report for a research query. "
-    "You will be provided with the original query, and some initial research done by a research assistant.\n"
-    "You should first come up with an outline for the report that describes the structure and "
-    "flow of the report. Then, generate the report and return that as your final output.\n"
-    "The final output should be in markdown format, and it should be lengthy and detailed. Aim "
-    "for 5-10 pages of content, at least 1000 words."
-)
-
-class ReportData(BaseModel):
-    short_summary: str
-    markdown_report: str
-    follow_up_questions: list[str]
-
-writer_agent = Agent(
-    name="WriterAgent",
-    instructions=REPORT_INSTRUCTIONS,
-    model=agent_model,
-    model_settings=model_settings,
-    output_type=ReportData,
-)
-
-async def write_report(query: str, search_results: list[str]):
-    print("Thinking about report...")
-    input_text = f"Original query: {query}\nSummarized search results: {search_results}"
-    result = await writer_agent.run(input_text)
-    print("Finished writing report")
-    return result.output
+# %% Main
 
 with ui.header().style('justify-content: space-between; align-items: center;'):
     ui.label('Simple Deep Search').classes('text-xl font-semibold')
@@ -197,6 +46,11 @@ async def handle_new_search_click():
     report_step.clear()
     report_step.close()
     main_card_section.clear()
+
+async def export(markdown: str):
+    path = export_pdf(markdown)
+    ui.download(path)
+        
 
 async def handle_send_click():
     searching = {
@@ -256,9 +110,12 @@ f'''**Search**: {i+1}<br>
     report_step.clear()
     with report_step:
         ui.markdown(report.markdown_report)
-        ui.button('Export PDF', on_click=lambda: export_pdf(report.markdown_report))
+        ui.button('Export PDF', on_click=lambda: export(report.markdown_report))
     with main_card_section:
         ui.markdown(report.markdown_report)
 
-    
+
+# %% Run App
 ui.run(title='Deep Search Agent', port=int(os.environ.get('APP_PORT', 9000)), reload=True) 
+
+# %%
